@@ -221,7 +221,7 @@ class DropLineEdit(QLineEdit):
 class MainWindow(QWidget):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Papa Podcast - Audio Joiner")
+        self.setWindowTitle("Quotenschwabe Podcast - Audio Joiner")
         self.setMinimumWidth(700)
         self.setMinimumHeight(400)
 
@@ -229,7 +229,7 @@ class MainWindow(QWidget):
         root.setSpacing(12)
 
         # Title
-        title = QLabel("Papa Podcast - Episode zusammenfügen")
+        title = QLabel("Quotenschwabe Podcast - Episode zusammenfügen")
         title.setStyleSheet("font-weight: 600; font-size: 16px;")
         root.addWidget(title)
 
