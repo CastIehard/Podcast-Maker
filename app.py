@@ -17,20 +17,33 @@ from PySide6.QtWidgets import (
 
 # ----------------------------- Config -----------------------------
 
-# Expected files in episode folder
-EPISODE_FILES = ["intro.mp3", "vorab.mp3", "kapitel.mp3", "outro.mp3", "jingle_vorne.mp3", "jingle_hinten.mp3"]
+# Required files in every episode folder
+BASE_FILES = ["intro.mp3", "kapitel.mp3", "outro.mp3", "jingle_vorne.mp3", "jingle_hinten.mp3"]
 
-# Order for concatenation:
+# Concat order with vorab:
 # jingle_vorne → intro → jingle_hinten → vorab → kapitel → jingle_vorne → outro → jingle_hinten
-CONCAT_ORDER = [
+CONCAT_ORDER_VORAB = [
     "jingle_vorne",
     "intro",
     "jingle_hinten",
     "vorab",
     "kapitel",
-    "jingle_vorne",  # used again
+    "jingle_vorne",
     "outro",
-    "jingle_hinten",  # used again
+    "jingle_hinten",
+]
+
+# Concat order with hinterher:
+# jingle_vorne → intro → jingle_hinten → kapitel → hinterher → jingle_vorne → outro → jingle_hinten
+CONCAT_ORDER_HINTERHER = [
+    "jingle_vorne",
+    "intro",
+    "jingle_hinten",
+    "kapitel",
+    "hinterher",
+    "jingle_vorne",
+    "outro",
+    "jingle_hinten",
 ]
 
 
@@ -137,10 +150,28 @@ def process_episode(
             "Installiere ffmpeg oder bundle es mit der .exe."
         )
     
+    # Detect vorab / hinterher
+    has_vorab = os.path.exists(os.path.join(episode_folder, "vorab.mp3"))
+    has_hinterher = os.path.exists(os.path.join(episode_folder, "hinterher.mp3"))
+    
+    if has_vorab and has_hinterher:
+        raise RuntimeError(
+            "Sowohl vorab.mp3 als auch hinterher.mp3 gefunden.\n"
+            "Bitte lösche eine der beiden Dateien."
+        )
+    if not has_vorab and not has_hinterher:
+        raise RuntimeError(
+            "Weder vorab.mp3 noch hinterher.mp3 gefunden.\n"
+            "Bitte lege eine der beiden Dateien in den Ordner."
+        )
+    
+    middle_name = "vorab" if has_vorab else "hinterher"
+    concat_order = CONCAT_ORDER_VORAB if has_vorab else CONCAT_ORDER_HINTERHER
+    
     # Build file paths
     files = {
         "intro": os.path.join(episode_folder, "intro.mp3"),
-        "vorab": os.path.join(episode_folder, "vorab.mp3"),
+        middle_name: os.path.join(episode_folder, f"{middle_name}.mp3"),
         "kapitel": os.path.join(episode_folder, "kapitel.mp3"),
         "outro": os.path.join(episode_folder, "outro.mp3"),
         "jingle_vorne": os.path.join(episode_folder, "jingle_vorne.mp3"),
@@ -164,17 +195,8 @@ def process_episode(
     
     with tempfile.TemporaryDirectory(prefix="podcast_") as td:
         # Normalize all unique files
-        unique_files = {
-            "intro": files["intro"],
-            "vorab": files["vorab"],
-            "kapitel": files["kapitel"],
-            "outro": files["outro"],
-            "jingle_vorne": files["jingle_vorne"],
-            "jingle_hinten": files["jingle_hinten"],
-        }
-        
         normalized = {}
-        for name, path in unique_files.items():
+        for name, path in files.items():
             if status_callback:
                 status_callback(f"Normalisiere {name}…")
             outwav = os.path.join(td, f"{name}_norm.wav")
@@ -182,7 +204,7 @@ def process_episode(
             normalized[name] = outwav
         
         # Build concatenation order
-        concat_files = [normalized[name] for name in CONCAT_ORDER]
+        concat_files = [normalized[name] for name in concat_order]
         
         # Output path
         output_path = os.path.join(output_folder, f"Kapitel {chapter_number}.mp3")
@@ -246,7 +268,7 @@ class MainWindow(QWidget):
         root.addWidget(chapter_group)
 
         # Episode folder
-        episode_group = QGroupBox("Episode-Ordner (alle 6 Dateien: intro, vorab, kapitel, outro, jingle_vorne, jingle_hinten)")
+        episode_group = QGroupBox("Episode-Ordner (intro, vorab ODER hinterher, kapitel, outro, jingle_vorne, jingle_hinten)")
         episode_layout = QHBoxLayout(episode_group)
         self.episode_folder_edit = DropLineEdit("Ordner hierher ziehen oder auswählen…")
         self.episode_folder_btn = QPushButton("Ordner wählen…")
@@ -310,21 +332,46 @@ class MainWindow(QWidget):
             self.file_status.setStyleSheet("color: #666;")
             return
         
+        has_vorab = os.path.exists(os.path.join(folder, "vorab.mp3"))
+        has_hinterher = os.path.exists(os.path.join(folder, "hinterher.mp3"))
+        
+        if has_vorab and has_hinterher:
+            self.file_status.setText(
+                "⚠ Sowohl vorab.mp3 als auch hinterher.mp3 gefunden – bitte eine löschen!"
+            )
+            self.file_status.setStyleSheet("color: #c00; font-weight: bold;")
+            return
+        
+        # Determine which middle file to expect
+        if has_vorab:
+            middle = "vorab.mp3"
+            mode = "Vorab-Modus (Intro → Vorab → Kapitel → Outro)"
+        elif has_hinterher:
+            middle = "hinterher.mp3"
+            mode = "Hinterher-Modus (Intro → Kapitel → Hinterher → Outro)"
+        else:
+            middle = None
+            mode = None
+        
+        check_files = BASE_FILES + ([middle] if middle else [])
+        
         found = []
         missing = []
-        
-        for fname in EPISODE_FILES:
+        for fname in check_files:
             path = os.path.join(folder, fname)
             if os.path.exists(path):
                 found.append(f"✓ {fname}")
             else:
                 missing.append(f"✗ {fname}")
         
+        if not middle:
+            missing.append("✗ vorab.mp3 oder hinterher.mp3")
+        
         if missing:
             self.file_status.setText("Fehlende Dateien: " + ", ".join(missing))
             self.file_status.setStyleSheet("color: #c00;")
         else:
-            self.file_status.setText("Alle Dateien gefunden: " + ", ".join(found))
+            self.file_status.setText(f"{mode}  –  " + ", ".join(found))
             self.file_status.setStyleSheet("color: #0a0;")
 
     def set_status(self, msg: str):
@@ -341,9 +388,31 @@ class MainWindow(QWidget):
             QMessageBox.critical(self, "Fehler", "Bitte wähle einen gültigen Episode-Ordner.")
             return
         
-        # Check episode files
+        # Check vorab/hinterher conflict
+        has_vorab = os.path.exists(os.path.join(episode_folder, "vorab.mp3"))
+        has_hinterher = os.path.exists(os.path.join(episode_folder, "hinterher.mp3"))
+        
+        if has_vorab and has_hinterher:
+            QMessageBox.critical(
+                self, "Fehler",
+                "Sowohl vorab.mp3 als auch hinterher.mp3 gefunden.\n"
+                "Bitte lösche eine der beiden Dateien."
+            )
+            return
+        
+        if not has_vorab and not has_hinterher:
+            QMessageBox.critical(
+                self, "Fehler",
+                "Weder vorab.mp3 noch hinterher.mp3 gefunden.\n"
+                "Bitte lege eine der beiden Dateien in den Ordner."
+            )
+            return
+        
+        middle = "vorab.mp3" if has_vorab else "hinterher.mp3"
+        check_files = BASE_FILES + [middle]
+        
         missing = []
-        for fname in EPISODE_FILES:
+        for fname in check_files:
             if not os.path.exists(os.path.join(episode_folder, fname)):
                 missing.append(fname)
         
